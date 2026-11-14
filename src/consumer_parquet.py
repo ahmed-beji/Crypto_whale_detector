@@ -29,15 +29,18 @@ s3_client = boto3.client("s3", region_name=AWS_REGION)
 
 
 def create_consumer():
-    return KafkaConsumer(
+    print(f"🔌 Tentative de connexion au broker {KAFKA_BROKER} sur le topic {TOPIC_NAME}...")
+    consumer = KafkaConsumer(
         TOPIC_NAME,
         bootstrap_servers=[KAFKA_BROKER],
         value_deserializer=lambda x: json.loads(x.decode("utf-8")),
         auto_offset_reset="earliest",
-        enable_auto_commit=False,  # Commit manuel strict après upload S3
-        group_id="cold_path_s3_group"
+        enable_auto_commit=False,
+        group_id="cold_path_s3_group",
+        api_version=(2, 5, 0)  # <-- AJOUT CRITIQUE POUR ÉVITER LE GEL INFINI
     )
-
+    print("✅ Connexion Kafka réussie !")
+    return consumer
 
 def flush_to_s3(batch_data, consumer):
     """Convertit le lot en Parquet en RAM, l'envoie sur S3, puis commit l'offset Kafka."""
