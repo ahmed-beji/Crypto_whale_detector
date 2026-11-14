@@ -8,3 +8,8 @@ output "EC2_SSH_KEY" {
   description = "La clé privée SSH brute pour GitHub Actions"
   sensitive   = true
 }
+
+output "S3_BUCKET_NAME" {
+  description = "Nom du bucket S3 pour la Voie Froide"
+  value       = aws_s3_bucket.datalake.bucket
+}
