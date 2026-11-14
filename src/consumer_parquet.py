@@ -7,12 +7,12 @@ import sys
 import boto3
 import pandas as pd
 from datetime import datetime, timezone
-from kafka import KafkaConsumer
+from confluent_kafka import Consumer, KafkaError
 from botocore.exceptions import BotoCoreError, ClientError
 
 # --- CONFIGURATION ---
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "redpanda:9092")
-TOPIC_NAME = os.getenv("KAFKA_TOPIC", "binance-trades")  # CORRIGÉ : Utilisation du tiret
+TOPIC_NAME = os.getenv("KAFKA_TOPIC", "binance-trades")
 S3_BUCKET = os.getenv("S3_BUCKET_NAME")
 AWS_REGION = os.getenv("AWS_REGION", "eu-west-3")
 
@@ -24,23 +24,20 @@ if not S3_BUCKET:
     print("❌ ERREUR CRITIQUE : La variable S3_BUCKET_NAME est absente du fichier .env")
     sys.exit(1)
 
-# Initialisation du client S3 (utilise automatiquement l'IAM Instance Profile de l'EC2)
 s3_client = boto3.client("s3", region_name=AWS_REGION)
 
-
 def create_consumer():
-    print(f"🔌 Tentative de connexion au broker {KAFKA_BROKER} sur le topic {TOPIC_NAME}...")
-    consumer = KafkaConsumer(
-        TOPIC_NAME,
-        bootstrap_servers=[KAFKA_BROKER],
-        value_deserializer=lambda x: json.loads(x.decode("utf-8")),
-        auto_offset_reset="earliest",
-        enable_auto_commit=False,
-        group_id="cold_path_s3_group",
-        api_version=(2, 5, 0)  # <-- AJOUT CRITIQUE POUR ÉVITER LE GEL INFINI
-    )
-    print("✅ Connexion Kafka réussie !")
+    print(f"🔌 Tentative de connexion (confluent-kafka) au broker {KAFKA_BROKER}...")
+    consumer = Consumer({
+        'bootstrap.servers': KAFKA_BROKER,
+        'group.id': 'cold_path_s3_group',
+        'auto.offset.reset': 'earliest',
+        'enable.auto.commit': False
+    })
+    consumer.subscribe([TOPIC_NAME])
+    print(f"✅ Connecté et abonné au topic : {TOPIC_NAME}")
     return consumer
+
 
 def flush_to_s3(batch_data, consumer):
     """Convertit le lot en Parquet en RAM, l'envoie sur S3, puis commit l'offset Kafka."""
@@ -48,7 +45,6 @@ def flush_to_s3(batch_data, consumer):
         return True
 
     now = datetime.now(timezone.utc)
-    # Partitionnement standard Hive pour AWS Athena / Spark / BigQuery
     s3_key = (
         f"whales/year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/"
         f"whales_{now.strftime('%Y%m%d_%H%M%S')}.parquet"
@@ -57,25 +53,23 @@ def flush_to_s3(batch_data, consumer):
     try:
         df = pd.DataFrame(batch_data)
 
-        # Écriture du fichier Parquet en mémoire vive (RAM) sans toucher au disque EC2
         parquet_buffer = io.BytesIO()
         df.to_parquet(parquet_buffer, engine="pyarrow", compression="snappy", index=False)
         parquet_buffer.seek(0)
 
-        # Upload vers AWS S3
         s3_client.put_object(
             Bucket=S3_BUCKET,
             Key=s3_key,
             Body=parquet_buffer.getvalue()
         )
 
-        # Validation des offsets Kafka UNIQUEMENT si S3 a confirmé l'écriture
-        consumer.commit()
+        # Validation asynchrone pour ne pas bloquer le thread principal
+        consumer.commit(asynchronous=True)
         print(f"✅ [S3 UPLOAD & COMMIT] {len(batch_data)} baleines -> s3://{S3_BUCKET}/{s3_key}")
         return True
 
     except (BotoCoreError, ClientError) as e:
-        print(f"❌ [ERREUR S3] Échec de l'upload, offsets non commités (nouvel essai au prochain cycle) : {e}")
+        print(f"❌ [ERREUR S3] Échec de l'upload : {e}")
         return False
     except Exception as e:
         print(f"❌ [ERREUR INATTENDUE] : {e}")
@@ -88,9 +82,8 @@ def main():
     batch_data = []
     last_flush_time = time.time()
 
-    # Gestion de l'arrêt propre (SIGTERM lors d'un docker stop/restart)
     def graceful_shutdown(signum, frame):
-        print("\n🛑 Signal d'arrêt reçu. Sauvegarde d'urgence du lot en cours vers S3...")
+        print("\n🛑 Signal d'arrêt reçu. Sauvegarde d'urgence...")
         flush_to_s3(batch_data, consumer)
         consumer.close()
         sys.exit(0)
@@ -99,38 +92,39 @@ def main():
     signal.signal(signal.SIGINT, graceful_shutdown)
 
     while True:
-        # Poll avec timeout de 5 secondes pour vérifier régulièrement le timer même sans nouveaux messages
-        records = consumer.poll(timeout_ms=5000, max_records=50)
+        # Lecture par lots avec un timeout strict de 5 secondes
+        messages = consumer.consume(num_messages=50, timeout=5.0)
 
-        # CORRIGÉ : Affichage pour prouver que le conteneur lit bien Kafka
-        if records:
-            print(f"📥 {sum(len(m) for m in records.values())} trades récupérés depuis Kafka, analyse en cours...")
+        if messages:
+            print(f"📥 {len(messages)} trades lus dans Kafka...")
 
-        for topic_partition, messages in records.items():
-            for message in messages:
-                trade = message.value
-                
-                # CORRIGÉ : Extraction des vraies clés du JSON Binance
-                try:
-                    price = float(trade.get("p", 0))
-                    quantity = float(trade.get("q", 0))
-                    trade_timestamp = int(trade.get("T", 0))
-                except (ValueError, TypeError):
-                    continue  # Ignore silencieusement les messages mal formés
-                
-                # Calcul manuel
-                value_usdt = price * quantity
+        for msg in messages:
+            if msg.error():
+                # Ignore les messages de fin de partition (normal)
+                if msg.error().code() != KafkaError._PARTITION_EOF:
+                    print(f"⚠️ Erreur Kafka : {msg.error()}")
+                continue
+            
+            try:
+                # confluent-kafka retourne des bytes, il faut décoder
+                trade = json.loads(msg.value().decode("utf-8"))
+                price = float(trade.get("p", 0))
+                quantity = float(trade.get("q", 0))
+                trade_timestamp = int(trade.get("T", 0))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+            
+            value_usdt = price * quantity
 
-                if value_usdt >= WHALE_THRESHOLD_USDT:
-                    batch_data.append({
-                        "trade_timestamp": trade_timestamp,
-                        "price": price,
-                        "quantity": quantity,
-                        "value_usdt": value_usdt,
-                        "ingestion_timestamp_utc": datetime.now(timezone.utc).isoformat()
-                    })
+            if value_usdt >= WHALE_THRESHOLD_USDT:
+                batch_data.append({
+                    "trade_timestamp": trade_timestamp,
+                    "price": price,
+                    "quantity": quantity,
+                    "value_usdt": value_usdt,
+                    "ingestion_timestamp_utc": datetime.now(timezone.utc).isoformat()
+                })
 
-        # Condition hybride : Lot plein OU Temps écoulé (avec au moins 1 élément en attente)
         time_elapsed = time.time() - last_flush_time
         if len(batch_data) >= BATCH_SIZE or (len(batch_data) > 0 and time_elapsed >= FLUSH_INTERVAL_SEC):
             reason = "BATCH_SIZE atteint" if len(batch_data) >= BATCH_SIZE else "TIMEOUT écoulé"
@@ -139,7 +133,6 @@ def main():
             if flush_to_s3(batch_data, consumer):
                 batch_data.clear()
                 last_flush_time = time.time()
-
 
 if __name__ == "__main__":
     main()
