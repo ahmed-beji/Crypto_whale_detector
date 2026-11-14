@@ -68,7 +68,7 @@ services:
   detecteur_binance_v2:
     build: .
     container_name: producteur_binance
-    command: python src/producer_binance.py
+    command: python -u src/producer_binance.py
     env_file:
       - .env
     restart: unless-stopped
