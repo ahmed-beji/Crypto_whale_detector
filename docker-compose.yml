@@ -115,12 +115,10 @@ services:
       postgres:
         condition: service_healthy
 
-volumes:
-  postgres_data:
-
-
-
-etl_parquet:
+  # -----------------------------------------------------------
+  # 7. LE DATA LAKE (Voie Froide - Export Parquet vers S3)
+  # -----------------------------------------------------------
+  etl_parquet:
     build: .
     container_name: consommateur_parquet
     command: python -u src/consumer_parquet.py
@@ -130,3 +128,6 @@ etl_parquet:
     depends_on:
       redpanda:
         condition: service_healthy
+
+volumes:
+  postgres_data:
