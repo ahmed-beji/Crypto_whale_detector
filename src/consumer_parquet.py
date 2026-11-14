@@ -12,7 +12,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 # --- CONFIGURATION ---
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "redpanda:9092")
-TOPIC_NAME = os.getenv("KAFKA_TOPIC", "binance-trades")
+TOPIC_NAME = os.getenv("KAFKA_TOPIC", "binance-trades")  # CORRIGÉ : Utilisation du tiret
 S3_BUCKET = os.getenv("S3_BUCKET_NAME")
 AWS_REGION = os.getenv("AWS_REGION", "eu-west-3")
 
@@ -99,16 +99,30 @@ def main():
         # Poll avec timeout de 5 secondes pour vérifier régulièrement le timer même sans nouveaux messages
         records = consumer.poll(timeout_ms=5000, max_records=50)
 
+        # CORRIGÉ : Affichage pour prouver que le conteneur lit bien Kafka
+        if records:
+            print(f"📥 {sum(len(m) for m in records.values())} trades récupérés depuis Kafka, analyse en cours...")
+
         for topic_partition, messages in records.items():
             for message in messages:
                 trade = message.value
-                value_usdt = float(trade.get("value_usdt", 0))
+                
+                # CORRIGÉ : Extraction des vraies clés du JSON Binance
+                try:
+                    price = float(trade.get("p", 0))
+                    quantity = float(trade.get("q", 0))
+                    trade_timestamp = int(trade.get("T", 0))
+                except (ValueError, TypeError):
+                    continue  # Ignore silencieusement les messages mal formés
+                
+                # Calcul manuel
+                value_usdt = price * quantity
 
                 if value_usdt >= WHALE_THRESHOLD_USDT:
                     batch_data.append({
-                        "trade_timestamp": int(trade["trade_timestamp"]),
-                        "price": float(trade["price"]),
-                        "quantity": float(trade["quantity"]),
+                        "trade_timestamp": trade_timestamp,
+                        "price": price,
+                        "quantity": quantity,
                         "value_usdt": value_usdt,
                         "ingestion_timestamp_utc": datetime.now(timezone.utc).isoformat()
                     })
@@ -117,7 +131,7 @@ def main():
         time_elapsed = time.time() - last_flush_time
         if len(batch_data) >= BATCH_SIZE or (len(batch_data) > 0 and time_elapsed >= FLUSH_INTERVAL_SEC):
             reason = "BATCH_SIZE atteint" if len(batch_data) >= BATCH_SIZE else "TIMEOUT écoulé"
-            print(f"⏳ Déclenchement du flush ({reason} : {len(batch_data)} lignes)...")
+            print(f"⏳ Déclenchement du flush ({reason} : {len(batch_data)} baleines)...")
 
             if flush_to_s3(batch_data, consumer):
                 batch_data.clear()
