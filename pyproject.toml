@@ -8,6 +8,8 @@ dependencies = [
     "websocket-client==1.7.0",
     "psycopg2-binary==2.9.9",
     "pyarrow",
+    "pandas" ,
+    "boto3" ,
     "pytest"
 ]
 
