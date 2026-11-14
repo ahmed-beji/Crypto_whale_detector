@@ -9,6 +9,8 @@ dependencies = [
     "psycopg2-binary==2.9.9",
     "pyarrow",
     "pandas" ,
+    "kafka-python" ,
+    "botocore.exceptions" ,
     "boto3" ,
     "pytest"
 ]
