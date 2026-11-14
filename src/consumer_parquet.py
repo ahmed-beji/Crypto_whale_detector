@@ -12,7 +12,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 # --- CONFIGURATION ---
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "redpanda:9092")
-TOPIC_NAME = os.getenv("KAFKA_TOPIC", "binance_trades")
+TOPIC_NAME = os.getenv("KAFKA_TOPIC", "binance-trades")
 S3_BUCKET = os.getenv("S3_BUCKET_NAME")
 AWS_REGION = os.getenv("AWS_REGION", "eu-west-3")
 
