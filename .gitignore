@@ -17,3 +17,5 @@ data/
 *.tfstate.backup
 .terraform.lock.hcl
 .terraform/
+*.tfvars
+secrets.auto.tfvars

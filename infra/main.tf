@@ -28,6 +28,36 @@ provider "aws" {
   }
 }
 
+# --- Variables sensibles ---
+variable "env_prod_content" {
+  description = "Contenu du fichier .env pour la production"
+  type        = string
+  sensitive   = true
+}
+
+variable "github_token" {
+  description = "Token GitHub pour le déploiement automatisé"
+  type        = string
+  sensitive   = true
+}
+
+# --- Paramètres SSM ---
+resource "aws_ssm_parameter" "env_prod" {
+  name        = "/usine-etl/env-prod"
+  description = "Fichier .env de production pour l'ETL"
+  type        = "SecureString"
+  value       = var.env_prod_content
+  overwrite   = true
+}
+
+resource "aws_ssm_parameter" "github_token" {
+  name        = "/usine-etl/github-token"
+  description = "Token GitHub pour cloner le repo"
+  type        = "SecureString"
+  value       = var.github_token
+  overwrite   = true
+}
+
 # 1. Génération d'une clé SSH dédiée pour GitHub Actions
 resource "tls_private_key" "deploy_key" {
   algorithm = "RSA"
@@ -55,7 +85,6 @@ resource "aws_security_group" "etl_sg" {
   name        = "crypto-etl-sg"
   description = "Regles strictes pour ETL (SSH, Metabase, Redpanda Console)"
 
-  # Port 22 : SSH
   ingress {
     from_port   = 22
     to_port     = 22
@@ -63,7 +92,6 @@ resource "aws_security_group" "etl_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Port 3000 : Dashboard Metabase
   ingress {
     from_port   = 3000
     to_port     = 3000
@@ -71,7 +99,6 @@ resource "aws_security_group" "etl_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Port 8080 : Redpanda Console (Monitoring Kafka)
   ingress {
     from_port   = 8080
     to_port     = 8080
@@ -79,7 +106,6 @@ resource "aws_security_group" "etl_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Trafic sortant illimité (API Binance, AWS S3, packages)
   egress {
     from_port   = 0
     to_port     = 0
@@ -95,10 +121,9 @@ resource "random_id" "bucket_suffix" {
 
 resource "aws_s3_bucket" "datalake" {
   bucket        = "crypto-whale-datalake-${random_id.bucket_suffix.hex}"
-  force_destroy = true # Permet à terraform destroy de vider le bucket sans erreur
+  force_destroy = true 
 }
 
-# Blocage strict de tout accès public
 resource "aws_s3_bucket_public_access_block" "datalake_private" {
   bucket                  = aws_s3_bucket.datalake.id
   block_public_acls       = true
@@ -107,23 +132,19 @@ resource "aws_s3_bucket_public_access_block" "datalake_private" {
   restrict_public_buckets = true
 }
 
-# Règle anti-facturation : suppression automatique des fichiers après 30 jours
 resource "aws_s3_bucket_lifecycle_configuration" "datalake_lifecycle" {
   bucket = aws_s3_bucket.datalake.id
-
   rule {
     id     = "purge-after-30-days"
     status = "Enabled"
-
     filter {}
-
     expiration {
       days = 30
     }
   }
 }
 
-# 5. SÉCURITÉ IAM (Accès EC2 -> S3 sans clé secrète)
+# 5. SÉCURITÉ IAM (Accès EC2 -> S3 ET SSM)
 resource "aws_iam_role" "ec2_s3_role" {
   name = "ec2_datalake_writer_role"
 
@@ -158,6 +179,24 @@ resource "aws_iam_role_policy" "s3_write_policy" {
   })
 }
 
+# --- CORRIGÉ : Autorisation de lire les DEUX paramètres SSM ---
+resource "aws_iam_role_policy" "ssm_read_policy" {
+  name = "ssm_env_read_policy"
+  role = aws_iam_role.ec2_s3_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameter"]
+      Resource = [
+        aws_ssm_parameter.env_prod.arn,
+        aws_ssm_parameter.github_token.arn
+      ]
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "ec2_s3_profile" {
   name = "ec2_datalake_profile"
   role = aws_iam_role.ec2_s3_role.name
@@ -166,26 +205,21 @@ resource "aws_iam_instance_profile" "ec2_s3_profile" {
 # 6. Provisionnement du Serveur EC2
 resource "aws_instance" "etl_server" {
   ami           = data.aws_ami.ubuntu.id
-  instance_type = "t2.micro" # Éligible au Free Tier
+  instance_type = "t2.micro" 
   key_name      = aws_key_pair.etl_ec2_key.key_name
 
   vpc_security_group_ids = [aws_security_group.etl_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2_s3_profile.name
 
-  # Liaison du rôle IAM pour autoriser l'écriture directe sur S3
-  iam_instance_profile = aws_iam_instance_profile.ec2_s3_profile.name
-
-  # Empêche Terraform de détruire l'instance si Ubuntu sort une mise à jour d'AMI
   lifecycle {
     ignore_changes = [ami, user_data]
   }
 
-  # Optimisation du disque dur pour stocker la base de données
   root_block_device {
-    volume_size = 15 # Go
+    volume_size = 15
     volume_type = "gp3"
   }
 
-  # Script de démarrage d'infrastructure (SWAP + Docker)
   user_data = <<-EOF
               #!/bin/bash
               
@@ -196,9 +230,9 @@ resource "aws_instance" "etl_server" {
               swapon /swapfile
               echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
 
-              # --- INSTALLATION DES DÉPENDANCES ---
+              # --- INSTALLATION DES DÉPENDANCES ET AWS CLI ---
               apt-get update -y
-              apt-get install -y ca-certificates curl gnupg git
+              apt-get install -y ca-certificates curl gnupg git awscli
 
               # --- INSTALLATION OFFICIELLE DE DOCKER ---
               install -m 0755 -d /etc/apt/keyrings
@@ -209,7 +243,32 @@ resource "aws_instance" "etl_server" {
               apt-get update -y
               apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-              # --- PERMISSIONS ---
               usermod -aG docker ubuntu
+
+              # --- RÉCUPÉRATION DES SECRETS ET DU CODE ---
+              mkdir -p /home/ubuntu/Detection_fraude
+              
+              # 1. Génération du fichier .env
+              aws ssm get-parameter \
+                --region eu-west-3 \
+                --name "/usine-etl/env-prod" \
+                --with-decryption \
+                --query "Parameter.Value" \
+                --output text > /home/ubuntu/Detection_fraude/.env
+              
+              chown ubuntu:ubuntu /home/ubuntu/Detection_fraude/.env
+              chmod 600 /home/ubuntu/Detection_fraude/.env
+
+              # 2. Récupération du Token GitHub en mémoire
+              GIT_TOKEN=$(aws ssm get-parameter --region eu-west-3 --name "/usine-etl/github-token" --with-decryption --query "Parameter.Value" --output text)
+
+              # 3. Clonage silencieux (utilise le dossier /tmp pour ne pas écraser le .env)
+              git clone https://$GIT_TOKEN@github.com/ahmed-beji/Detection_fraude.git /tmp/repo
+              cp -r /tmp/repo/* /home/ubuntu/Detection_fraude/
+              rm -rf /tmp/repo
+
+              # 4. Lancement automatisé de l'infrastructure
+              cd /home/ubuntu/Detection_fraude
+              sudo docker compose up -d
               EOF
 }
