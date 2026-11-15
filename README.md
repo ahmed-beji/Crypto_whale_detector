@@ -29,25 +29,4 @@ L'architecture abandonne les requêtes HTTP synchrones classiques au profit d'un
 5. **Dataviz (Metabase) :** Tableau de bord branché sur PostgreSQL.
 6. **Infrastructure (AWS) :** Déploiement automatisé sur EC2.
 
-```mermaid
-flowchart LR
-    subgraph AWS [Infrastructure AWS]
-        direction TB
-        subgraph Docker [Stack Docker Compose EC2]
-            A[Moteur Ingestion Python<br/>WebSocket Consumer]
-            B[(PostgreSQL<br/>Hot Storage)]
-            D[Metabase<br/>Dashboard Dataviz]
-        end
-        C[(AWS S3<br/>Data Lake Parquet)]
-    end
-
-    API((API Binance)) == Flux BTC/USDT<br/>Temps Réel ==> A
-    A -- Filtre Volume<br/>Écriture instantanée --> B
-    A -- Flush RAM (PyArrow)<br/>Partitionnement dt=YYYY-MM-DD --> C
-    B -. Requêtes SQL .-> D
-    User((Data Engineer)) == Port 3000<br/>HTTP ==> D
-
-    classDef aws fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:black;
-    classDef docker fill:#2496ED,stroke:#fff,stroke-width:2px,color:white;
-    class AWS aws;
-    class Docker docker;
+![Architecture du système](./assets/architecture.jpeg)
