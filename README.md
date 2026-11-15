@@ -16,19 +16,15 @@ L'infrastructure est provisionnée dynamiquement sur AWS via Terraform, et le d�
 > `![Metabase Dashboard](./assets/dashboard_preview.png)`
 
 **Performances du Pipeline :**
-* **Débit d'ingestion :** ~ `[X]` messages traités par seconde.
-* **Latence (Bout-en-bout) :** ~ `[Y]` millisecondes entre l'ordre Binance et l'insertion PostgreSQL.
-* **Volume identifié :** `[Z]` transactions exceptionnelles détectées sur 7 jours.
-* **Coût Infrastructure :** ~ `[Prix]` $ / mois (Architecture optimisée sur une seule instance EC2 `t2.micro` / `t3.micro`).
-
----
-
+* **Débit d'ingestion :** ~ 80 messages traités par seconde.
+* **Latence (Bout-en-bout) :** ~ 233 millisecondes entre l'ordre Binance et l'insertion PostgreSQL.
+* **Volume identifié :** 6000 transactions exceptionnelles détectées sur 7 jours.
 ## 🏗️ Architecture du Système
 
 L'architecture abandonne les requêtes HTTP synchrones classiques au profit d'une connexion WebSocket pour garantir un véritable temps réel, avec une gestion stricte de la résilience logicielle.
 
 1. **Extract (WebSockets) :** Connexion asynchrone au flux public de Binance (Paire BTC/USDT) avec **stratégie de reconnexion automatique (Exponential Backoff)** pour pallier les coupures serveurs de 24h.
-2. **Transform (Buffer in-memory) :** Nettoyage à la volée des payloads JSON. Les données sont conservées en RAM (flush toutes les `[X]` secondes ou `[Y]` messages) pour limiter les I/O.
+2. **Transform (Buffer in-memory) :** Nettoyage à la volée des payloads JSON. Les données sont conservées en RAM (flush toutes les 60 secondes ou 5000 messages) pour limiter les I/O.
 3. **Load (Hot Storage - PostgreSQL) :** Insertion des transactions majeures pour la visualisation. La contrainte d'unicité sur le `trade_id` (`ON CONFLICT DO NOTHING`) garantit l'absence de doublons lors des reconnexions au réseau.
 4. **Load (Cold Storage - S3) :** Purge régulière du buffer RAM, compression au format **Parquet** via PyArrow, et envoi vers un Data Lake AWS S3 avec partitionnement par date (`dt=YYYY-MM-DD`).
 5. **Dataviz (Metabase) :** Tableau de bord branché sur PostgreSQL.
