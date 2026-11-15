@@ -12,8 +12,7 @@ L'infrastructure est provisionnée dynamiquement sur AWS via Terraform, et le d�
 
 ## 📊 Dashboard & Métriques en Production
 
-> **Note :** *[Insérer ici une capture d'écran de votre dashboard Metabase avec quelques graphiques de volume et de répartition]*
-> `![Metabase Dashboard](./assets/dashboard_preview.png)`
+>![Dashboard Metabase](./assets/dashboard_preview.png)
 
 **Performances du Pipeline :**
 * **Débit d'ingestion :** ~ 80 messages traités par seconde.
