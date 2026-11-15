@@ -50,13 +50,13 @@ jobs:
           command_timeout: 30m
           script: |
             # 1. Préparation du répertoire
-            if [ ! -d "/home/ubuntu/Detection_fraude" ]; then
-              git clone https://github.com/ahmed-beji/Detection_fraude.git /home/ubuntu/Detection_fraude
+            if [ ! -d "/home/ubuntu/Crypto_whale_detector" ]; then
+              git clone https://github.com/ahmed-beji/Crypto_whale_detector.git /home/ubuntu/Crypto_whale_detector
             fi
             
-            cd /home/ubuntu/Detection_fraude
-            sudo chown -R ubuntu:ubuntu /home/ubuntu/Detection_fraude
-            git config --global --add safe.directory /home/ubuntu/Detection_fraude
+            cd /home/ubuntu/Crypto_whale_detector
+            sudo chown -R ubuntu:ubuntu /home/ubuntu/Crypto_whale_detector
+            git config --global --add safe.directory /home/ubuntu/Crypto_whale_detector
             
             # 2. Mise à jour du code
             git pull origin main

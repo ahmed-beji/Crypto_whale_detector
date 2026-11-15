@@ -246,7 +246,7 @@ resource "aws_instance" "etl_server" {
               usermod -aG docker ubuntu
 
               # --- RÉCUPÉRATION DES SECRETS ET DU CODE ---
-              mkdir -p /home/ubuntu/Detection_fraude
+              mkdir -p /home/ubuntu/Crypto_whale_detector
               
               # 1. Génération du fichier .env
               aws ssm get-parameter \
@@ -254,21 +254,21 @@ resource "aws_instance" "etl_server" {
                 --name "/usine-etl/env-prod" \
                 --with-decryption \
                 --query "Parameter.Value" \
-                --output text > /home/ubuntu/Detection_fraude/.env
+                --output text > /home/ubuntu/Crypto_whale_detector/.env
               
-              chown ubuntu:ubuntu /home/ubuntu/Detection_fraude/.env
-              chmod 600 /home/ubuntu/Detection_fraude/.env
+              chown ubuntu:ubuntu /home/ubuntu/Crypto_whale_detector/.env
+              chmod 600 /home/ubuntu/Crypto_whale_detector/.env
 
               # 2. Récupération du Token GitHub en mémoire
               GIT_TOKEN=$(aws ssm get-parameter --region eu-west-3 --name "/usine-etl/github-token" --with-decryption --query "Parameter.Value" --output text)
 
               # 3. Clonage silencieux (utilise le dossier /tmp pour ne pas écraser le .env)
-              git clone https://$GIT_TOKEN@github.com/ahmed-beji/Detection_fraude.git /tmp/repo
-              cp -r /tmp/repo/* /home/ubuntu/Detection_fraude/
+              git clone https://$GIT_TOKEN@github.com/ahmed-beji/Crypto_whale_detector.git /tmp/repo
+              cp -r /tmp/repo/* /home/ubuntu/Crypto_whale_detector/
               rm -rf /tmp/repo
 
               # 4. Lancement automatisé de l'infrastructure
-              cd /home/ubuntu/Detection_fraude
+              cd /home/ubuntu/Crypto_whale_detector
               sudo docker compose up -d
               EOF
 }
