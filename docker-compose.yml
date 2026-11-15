@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # -----------------------------------------------------------
   # 1. LA BASE DE DONNÉES (Le Hot Storage)
@@ -85,6 +87,11 @@ services:
     command: python src/consumer_etl.py
     env_file:
       - .env
+    environment:
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+      - DB_HOST=postgres
     restart: unless-stopped
     depends_on:
       redpanda:
@@ -104,10 +111,10 @@ services:
       - .env
     environment:
       MB_DB_TYPE: postgres
-      MB_DB_DBNAME: metabase_app
+      MB_DB_DBNAME: ${POSTGRES_DB}
       MB_DB_PORT: 5432
-      MB_DB_USER: ${DB_USER:-postgres}
-      MB_DB_PASS: ${DB_PASSWORD:-password}
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
       MB_DB_HOST: postgres
       JAVA_TOOL_OPTIONS: "-Xmx512m"
     restart: unless-stopped
@@ -124,6 +131,11 @@ services:
     command: python -u src/consumer_parquet.py
     env_file:
       - .env
+    environment:
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+      - DB_HOST=postgres
     restart: unless-stopped
     depends_on:
       redpanda:
